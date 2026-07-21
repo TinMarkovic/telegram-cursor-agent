@@ -25,8 +25,8 @@ data/
 # LLM working folder — private second brain, never committed
 llm/
 
-# Private ops skill (Tin server access) — keep locally, never publish
-.cursor/skills/ssh-server-access/
+# Maintainer Cursor rules/skills (reference private llm/); keep locally, never publish
+.cursor/
 
 # Editor/OS
 .DS_Store

@@ -36,24 +36,21 @@ Never invent tokens or ids. Stop and ask if anything is missing.
 
 ## Steps (no clone)
 
-### 1. Empty directory + four env values
+### 1. Empty directory + compose + env template
 
 ```bash
 mkdir -p tca && cd tca
-cat > .env <<'EOF'
-TELEGRAM_BOT_TOKEN=...
-CURSOR_API_KEY=...
-ALLOWED_SENDER_IDS=123456789
-TCA_WORKSPACE=/absolute/path/to/their/repo
-EOF
+curl -fsSL https://raw.githubusercontent.com/TinMarkovic/telegram-cursor-agent/main/compose.yml -o compose.yml
+curl -fsSL https://raw.githubusercontent.com/TinMarkovic/telegram-cursor-agent/main/.env.example -o .env
 ```
 
-Replace the three secrets/ids and `TCA_WORKSPACE`. No comments required in `.env`.
+Ask the human for the four values and write them into `.env` (editor, or
+`echo KEY=value >> .env` / `export` + rewrite — match how they already manage secrets).
+Do not invent tokens or ids.
 
-### 2. Fetch compose + start
+### 2. Start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/TinMarkovic/telegram-cursor-agent/main/compose.yml -o compose.yml
 docker compose up -d
 docker compose logs -f --tail=50
 ```
@@ -81,16 +78,18 @@ They message **their** bot:
 | `ALLOWED_SENDER_IDS` | container | Comma-separated Telegram user ids |
 | `TCA_WORKSPACE` | host (compose) | Absolute path mounted at `/workspace` |
 
-`WORKSPACE_PATH=/workspace` is set by compose. Optional overrides:
-`DEFAULT_MODEL`, `DEFAULT_PERMS_MODE`.
+`WORKSPACE_PATH=/workspace` is set by compose. Do **not** set `WORKSPACE_PATH` in
+`.env` for Docker — that is only for bare-metal env-only runs without `config.toml`.
+Optional overrides: `DEFAULT_MODEL`, `DEFAULT_PERMS_MODE`.
 
 ## Constraints
 
 - One workspace per instance.
+- Multiple `ALLOWED_SENDER_IDS` share one agent session / mode (not multi-tenant).
 - `interactive` mode is not shipped.
 - `readonly` uses `guard_writes()` (git revert), not reliable preToolUse blocks.
 - In `standard`, treat `CURSOR_API_KEY` as leakable via agent shell — never dump `env`.
-- Do not add `--privileged` unless the human asks.
+- Container drops to uid 1000 after entrypoint; do not add `--privileged` unless asked.
 
 ## Ops
 

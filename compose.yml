@@ -1,5 +1,6 @@
 # No clone required. Put this file next to a tiny .env and run: docker compose up -d
 # curl -fsSL https://raw.githubusercontent.com/TinMarkovic/telegram-cursor-agent/main/compose.yml -o compose.yml
+# Container drops to uid 1000; prefer a workspace owned by that uid on the host.
 
 services:
   telegram-cursor-agent:

@@ -247,8 +247,10 @@ def test_cancel_in_flight_returns_false_when_unsupported(manager: SessionManager
 
 
 def test_cancel_in_flight_cancels_active_run(manager: SessionManager) -> None:
-    run = AsyncMock()
+    # supports() is sync — MagicMock; only cancel() is awaited
+    run = MagicMock()
     run.supports.return_value = True
+    run.cancel = AsyncMock()
     manager._active_run = run
 
     assert asyncio.run(manager.cancel_in_flight()) is True
@@ -256,7 +258,7 @@ def test_cancel_in_flight_cancels_active_run(manager: SessionManager) -> None:
 
 
 def test_cancel_in_flight_swallows_unsupported_operation(manager: SessionManager) -> None:
-    run = AsyncMock()
+    run = MagicMock()
     run.supports.return_value = True
     run.cancel = AsyncMock(side_effect=UnsupportedRunOperationError("done"))
     manager._active_run = run
