@@ -234,6 +234,39 @@ Typical session shape: `/status` → set mode with `/perms` → freeform prompts
 
 ## Quickstart
 
+### Have an LLM do it
+
+Point your agent (Cursor, Claude, Codex, …) at the deploy skill and paste:
+
+```
+Read https://github.com/TinMarkovic/telegram-cursor-agent/blob/main/skills/deploy/SKILL.md
+and follow it to deploy telegram-cursor-agent on this machine with Docker.
+```
+
+Have ready: BotFather token, Cursor API key, your numeric Telegram user id, and
+the path to the repo the bot should operate on.
+
+### Docker
+
+Published image: `ghcr.io/tinmarkovic/telegram-cursor-agent` (built on each `v*` tag).
+
+```bash
+git clone https://github.com/TinMarkovic/telegram-cursor-agent.git
+cd telegram-cursor-agent
+cp .env.example .env                         # TELEGRAM_BOT_TOKEN, CURSOR_API_KEY
+cp config.docker.example.toml config.toml    # set your Telegram user id(s)
+mkdir -p workspace                           # or: export TCA_WORKSPACE=/path/to/your/repo
+docker compose up -d                         # pulls GHCR; add --build to build locally
+```
+
+`./workspace` (or `$TCA_WORKSPACE`) is mounted at `/workspace` inside the
+container — that must match `workspace_path` in `config.toml`. Session state
+lives in a named Docker volume.
+
+Then in Telegram: `/status`, `/perms readonly`, and a prompt.
+
+### Local (no Docker)
+
 Requires Python 3.12+.
 
 1. Clone and install:
@@ -293,11 +326,9 @@ Versioning is semver in `pyproject.toml` (`[project].version`). Tags: `vX.Y.Z`.
 Suggested release checklist:
 
 1. Bump version → `./scripts/check.sh` → commit on `main`.
-2. `git tag -a vX.Y.Z -m "…"` and push the tag.
-3. Deploy the tagged commit to your host (rsync, `git pull`, or your own pipeline). Keep `config.toml` / `.env` / `data/` on the host only.
-4. Restart your process manager (systemd unit name is yours to choose).
-
-Operator-specific host paths and SSH details stay out of this README on purpose.
+2. `git tag -a vX.Y.Z -m "…"` and push the tag (triggers GHCR publish via Release workflow).
+3. Deploy: `docker compose pull && docker compose up -d`, or build from the tagged commit.
+4. Confirm `ghcr.io/tinmarkovic/telegram-cursor-agent:X.Y.Z` (and `:latest`) on GHCR.
 
 ## Roadmap
 

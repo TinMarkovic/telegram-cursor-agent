@@ -1,0 +1,15 @@
+services:
+  telegram-cursor-agent:
+    # Prefer the published image; `build:` is the fallback / contributor path.
+    image: ghcr.io/tinmarkovic/telegram-cursor-agent:latest
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./config.toml:/app/config.toml:ro
+      - tca_data:/app/data
+      # Repo the agent operates on. In-container path must match config.toml workspace_path.
+      - ${TCA_WORKSPACE:-./workspace}:/workspace
+
+volumes:
+  tca_data:
