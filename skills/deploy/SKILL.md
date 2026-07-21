@@ -1,150 +1,109 @@
 ---
 name: deploy-telegram-cursor-agent
 description: >-
-  Deploy telegram-cursor-agent with Docker Compose on the user's machine.
+  Deploy telegram-cursor-agent with Docker — no repo clone required.
   Use when asked to set up, install, or run the Telegram ↔ Cursor SDK bridge,
   or when pointed at this skill URL / file.
 ---
 
-# Deploy telegram-cursor-agent (Docker)
+# Deploy telegram-cursor-agent (Docker, no clone)
 
 You are setting up **telegram-cursor-agent**: a Telegram polling bot that
 bridges allowlisted senders to a **local** Cursor SDK agent on one mounted
-workspace. Call-and-response only. Permission modes: `locked` / `readonly` /
-`standard`.
+workspace. Call-and-response only. Modes: `locked` / `readonly` / `standard`.
 
-Repo: https://github.com/TinMarkovic/telegram-cursor-agent  
 Image: `ghcr.io/tinmarkovic/telegram-cursor-agent:latest`  
-Default path: Docker Compose pulling that image. Prefer this over building from
-source or bare-metal Python unless the user insists.
+Skill: https://github.com/TinMarkovic/telegram-cursor-agent/blob/main/skills/deploy/SKILL.md  
+Compose: https://raw.githubusercontent.com/TinMarkovic/telegram-cursor-agent/main/compose.yml
+
+Prefer the **no-clone** path below. Do not `git clone` unless the human wants to
+hack on the bot itself.
 
 ## Ask the human first (do not invent)
 
-Collect before writing secrets or starting the bot:
-
-1. **Telegram bot token** — from [@BotFather](https://t.me/BotFather). Must be a
-   **dedicated** bot (not shared with another `getUpdates` poller).
-2. **Cursor API key** — Cursor Dashboard → Integrations (`CURSOR_API_KEY`).
-3. **Their Telegram user id** (numeric) — for `allowed_sender_ids`.
+1. **Telegram bot token** — [@BotFather](https://t.me/BotFather). Dedicated bot only.
+2. **Cursor API key** — Dashboard → Integrations.
+3. **Telegram user id** (numeric) — allowlist.
 4. **Workspace path** — absolute path to the git repo the agent should operate on.
-5. **Where to clone / run this project** — directory on disk (default: clone into
-   a sibling folder they choose).
 
-If any of these are missing, stop and ask. Never invent tokens or user ids.
+Never invent tokens or ids. Stop and ask if anything is missing.
 
 ## Done when
 
-- `docker compose ps` shows the service running (or logs show
-  `telegram-cursor-agent starting` + `registered bot commands`)
-- Human can message the bot `/status` and get a reply
-- `.env` and `config.toml` exist locally and are **not** committed
+- Container is running; logs show `starting` + `registered bot commands`
+- Human gets a `/status` reply from their bot
+- Secrets live only in a local `.env` (not committed anywhere)
 
-## Steps
+## Steps (no clone)
 
-### 1. Clone (if needed)
-
-```bash
-git clone https://github.com/TinMarkovic/telegram-cursor-agent.git
-cd telegram-cursor-agent
-```
-
-If they already have a clone, `cd` there and `git pull` on `main`.
-
-### 2. Config + secrets
+### 1. Empty directory + four env values
 
 ```bash
-cp .env.example .env
-cp config.docker.example.toml config.toml
+mkdir -p tca && cd tca
+cat > .env <<'EOF'
+TELEGRAM_BOT_TOKEN=...
+CURSOR_API_KEY=...
+ALLOWED_SENDER_IDS=123456789
+TCA_WORKSPACE=/absolute/path/to/their/repo
+EOF
 ```
 
-Edit `.env` (real values, no quotes needed):
+Replace the three secrets/ids and `TCA_WORKSPACE`. No comments required in `.env`.
 
-```
-TELEGRAM_BOT_TOKEN=<from BotFather>
-CURSOR_API_KEY=<from Cursor dashboard>
-```
-
-Edit `config.toml`:
-
-- Set `allowed_sender_ids = [<their numeric Telegram id>]`
-- Leave `workspace_path = "/workspace"` for Docker
-
-Do **not** commit `.env` or `config.toml` (already gitignored).
-
-### 3. Point at their workspace
-
-Either:
+### 2. Fetch compose + start
 
 ```bash
-export TCA_WORKSPACE=/absolute/path/to/their/repo
-```
-
-or copy/clone that repo into `./workspace` in the project directory
-(`TCA_WORKSPACE` defaults to `./workspace`).
-
-The compose file mounts that host path at `/workspace` in the container.
-
-### 4. Up
-
-```bash
+curl -fsSL https://raw.githubusercontent.com/TinMarkovic/telegram-cursor-agent/main/compose.yml -o compose.yml
 docker compose up -d
 docker compose logs -f --tail=50
 ```
 
-Compose pulls `ghcr.io/tinmarkovic/telegram-cursor-agent:latest` by default.
-Use `docker compose up --build -d` only if they want to build from the local
-checkout instead.
-
-Expect log lines like:
+Expect:
 
 - `telegram-cursor-agent starting — polling, workspace=/workspace`
 - `registered bot commands: status, perms, new, cancel`
 - `Application started`
 
-### 5. Verify with the human
+### 3. Verify with the human
 
-In Telegram, they message **their** bot:
+They message **their** bot:
 
-1. `/status` — mode, model, git snapshot, uptime
-2. `/perms readonly` then a harmless question about the repo
-3. Optional: `/perms standard` only after they understand write/push risk
+1. `/status`
+2. `/perms readonly` + a harmless repo question
+3. `/perms standard` only after they accept write/push risk
 
-## Layout reminder
+## What the four vars mean
 
-| Host | Container |
-|---|---|
-| `.env` | loaded via `env_file` |
-| `./config.toml` | `/app/config.toml` (read-only) |
-| `$TCA_WORKSPACE` or `./workspace` | `/workspace` |
-| Docker volume `tca_data` | `/app/data` (session store) |
+| Var | Where | Purpose |
+|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | container | BotFather token |
+| `CURSOR_API_KEY` | container | Cursor API key |
+| `ALLOWED_SENDER_IDS` | container | Comma-separated Telegram user ids |
+| `TCA_WORKSPACE` | host (compose) | Absolute path mounted at `/workspace` |
+
+`WORKSPACE_PATH=/workspace` is set by compose. Optional overrides:
+`DEFAULT_MODEL`, `DEFAULT_PERMS_MODE`.
 
 ## Constraints
 
-- One workspace per instance. No multi-repo router.
-- `interactive` approve/deny mode is **not** shipped.
-- `readonly` does not reliably block native Write via SDK hooks; the bot uses
-  `guard_writes()` (git revert). Do not promise preToolUse enforcement.
-- In `standard`, sandbox is off and the agent shell can see process env —
-  treat `CURSOR_API_KEY` as leakable; never ask the agent to dump `env`.
-- SDK sandbox / bubblewrap inside Docker is best-effort; do not require
-  `--privileged` unless the human asks and understands the tradeoff.
-- Prefer `docker compose`; only use local `python -m telegram_cursor_agent.bot`
-  if Docker is unavailable (see README “Local (no Docker)”).
+- One workspace per instance.
+- `interactive` mode is not shipped.
+- `readonly` uses `guard_writes()` (git revert), not reliable preToolUse blocks.
+- In `standard`, treat `CURSOR_API_KEY` as leakable via agent shell — never dump `env`.
+- Do not add `--privileged` unless the human asks.
 
-## Ops cheatsheet
+## Ops
 
 ```bash
 docker compose logs -f
 docker compose restart
-docker compose down
-# rotate secrets: edit .env → docker compose up -d --force-recreate
+docker compose pull && docker compose up -d
+# rotate: edit .env → docker compose up -d --force-recreate
 ```
 
 ## Out of scope
 
-- Creating the BotFather bot or Cursor account for them (guide only)
-- Hosting a multi-tenant / shared demo bot
-- Rewriting permission enforcement or upgrading Cursor SDK beyond what the
-  repo pins
-- Publishing the GHCR image (CI does that on `v*` tags; do not push ad-hoc
-  images unless the human asks)
+- Cloning this repo / building from source (unless asked)
+- Creating BotFather / Cursor accounts
+- Multi-tenant hosted bots
+- Publishing GHCR images

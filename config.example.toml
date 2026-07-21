@@ -1,17 +1,8 @@
-# Copy to config.toml (gitignored) and fill in for your deployment.
-# This file holds everything that makes an instance "someone's" — no secrets here,
-# those go in .env (see .env.example).
+# Optional — bare-metal / advanced. Docker needs no config.toml (env only).
 
-workspace_path = "/path/to/your/repo"         # the repo this instance operates on
-allowed_sender_ids = [123456789]              # Telegram user IDs allowed to talk to this bot
+workspace_path = "/path/to/your/repo"
+allowed_sender_ids = [123456789]
 default_model = "claude-sonnet-5"
 default_perms_mode = "standard"
-perms_dir = "./perms"                         # override with a local dir for workspace-specific tuning
-session_store_dir = "./data"                  # jsonl agent store + session sidecar (gitignored at deploy)
-
-# Prepended to the agent on the first message after /new or a fresh session (empty string disables)
-# session_header_template = ""
-
-# Override built-in short names (s5, c25, op, …) — keys are case-insensitive
-# [model_aliases]
-# op = "claude-opus-4-6"
+perms_dir = "./perms"
+session_store_dir = "./data"

@@ -1,9 +1,0 @@
-# Docker Compose defaults — copy to config.toml and set allowed_sender_ids.
-# Secrets stay in .env (TELEGRAM_BOT_TOKEN, CURSOR_API_KEY).
-
-workspace_path = "/workspace"                 # compose mounts TCA_WORKSPACE (or ./workspace) here
-allowed_sender_ids = [123456789]              # your Telegram user ID(s)
-default_model = "claude-sonnet-5"
-default_perms_mode = "standard"
-perms_dir = "./perms"
-session_store_dir = "./data"

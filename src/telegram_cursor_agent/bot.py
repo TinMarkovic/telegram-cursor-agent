@@ -6,7 +6,6 @@ import logging
 import os
 import sys
 import traceback
-from pathlib import Path
 from typing import cast
 
 from cursor_sdk.errors import CursorAgentError
@@ -17,7 +16,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 
 from telegram_cursor_agent import perms, status
 from telegram_cursor_agent.agent_session import SessionManager
-from telegram_cursor_agent.config import Config, load_config
+from telegram_cursor_agent.config import Config, resolve_config
 from telegram_cursor_agent.progress import run_with_progress
 
 TELEGRAM_MESSAGE_LIMIT: int = 4096
@@ -207,7 +206,7 @@ async def _post_shutdown(app: Application) -> None:
 
 def main() -> None:
     load_dotenv()
-    config = load_config(Path("config.toml"))
+    config = resolve_config()
 
     app = (
         Application.builder()

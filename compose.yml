@@ -1,8 +1,9 @@
+# No clone required. Put this file next to a tiny .env and run: docker compose up -d
+# curl -fsSL https://raw.githubusercontent.com/TinMarkovic/telegram-cursor-agent/main/compose.yml -o compose.yml
+
 services:
   telegram-cursor-agent:
-    # Prefer the published image; `build:` is for contributors hacking on this repo.
     image: ghcr.io/tinmarkovic/telegram-cursor-agent:latest
-    build: .
     restart: unless-stopped
     env_file: .env
     environment:

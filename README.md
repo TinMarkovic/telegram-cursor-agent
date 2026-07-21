@@ -42,12 +42,18 @@ flowchart LR
 
 ## Configuration
 
-Two files, both gitignored, both per-deployment:
+Docker needs **no `config.toml`** — four values in `.env` are enough:
 
-- **`config.toml`** — copy from [`config.example.toml`](config.example.toml). Which
-  workspace to operate on, who's allowed to talk to the bot, default model/permission mode.
-- **`.env`** — copy from [`.env.example`](.env.example). Secrets only:
-  `TELEGRAM_BOT_TOKEN`, `CURSOR_API_KEY`. Never go in `config.toml`, never committed.
+```
+TELEGRAM_BOT_TOKEN=
+CURSOR_API_KEY=
+ALLOWED_SENDER_IDS=
+TCA_WORKSPACE=
+```
+
+`TCA_WORKSPACE` is the host path compose mounts at `/workspace`. Optional overrides:
+`DEFAULT_MODEL`, `DEFAULT_PERMS_MODE`. If a `config.toml` is present, it wins over env
+for agent settings (see [`config.example.toml`](config.example.toml)).
 
 ## Permission modes
 
@@ -236,74 +242,47 @@ Typical session shape: `/status` → set mode with `/perms` → freeform prompts
 
 ### Have an LLM do it
 
-Point your agent (Cursor, Claude, Codex, …) at the deploy skill and paste:
-
 ```
 Read https://github.com/TinMarkovic/telegram-cursor-agent/blob/main/skills/deploy/SKILL.md
 and follow it to deploy telegram-cursor-agent on this machine with Docker.
 ```
 
-Have ready: BotFather token, Cursor API key, your numeric Telegram user id, and
-the path to the repo the bot should operate on.
+Have ready: BotFather token, Cursor API key, numeric Telegram user id, workspace path.
 
-### Docker
-
-Published image: `ghcr.io/tinmarkovic/telegram-cursor-agent` (built on each `v*` tag).
+### Docker (no clone)
 
 ```bash
-git clone https://github.com/TinMarkovic/telegram-cursor-agent.git
-cd telegram-cursor-agent
-cp .env.example .env                         # TELEGRAM_BOT_TOKEN, CURSOR_API_KEY
-cp config.docker.example.toml config.toml    # set your Telegram user id(s)
-mkdir -p workspace                           # or: export TCA_WORKSPACE=/path/to/your/repo
-docker compose up -d                         # pulls GHCR; add --build to build locally
+mkdir tca && cd tca
+cat > .env <<'EOF'
+TELEGRAM_BOT_TOKEN=
+CURSOR_API_KEY=
+ALLOWED_SENDER_IDS=
+TCA_WORKSPACE=/absolute/path/to/your/repo
+EOF
+# fill the four values, then:
+curl -fsSL https://raw.githubusercontent.com/TinMarkovic/telegram-cursor-agent/main/compose.yml -o compose.yml
+docker compose up -d
 ```
 
-`./workspace` (or `$TCA_WORKSPACE`) is mounted at `/workspace` inside the
-container — that must match `workspace_path` in `config.toml`. Session state
-lives in a named Docker volume.
-
-Then in Telegram: `/status`, `/perms readonly`, and a prompt.
+Image: `ghcr.io/tinmarkovic/telegram-cursor-agent:latest`. Then `/status` in Telegram.
 
 ### Local (no Docker)
 
 Requires Python 3.12+.
 
-1. Clone and install:
-
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-```
-
-2. Copy examples and fill them in:
-
-```bash
-cp config.example.toml config.toml   # workspace_path + your Telegram user id(s)
-cp .env.example .env                 # TELEGRAM_BOT_TOKEN + CURSOR_API_KEY
-```
-
-3. Run from the repo root (so `config.toml` / `.env` resolve):
-
-```bash
+git clone https://github.com/TinMarkovic/telegram-cursor-agent.git && cd telegram-cursor-agent
+python3 -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"
+cp .env.example .env && cp config.example.toml config.toml   # fill values
 python -m telegram_cursor_agent.bot
 ```
 
-4. In Telegram, message your bot: `/status`, then `/perms readonly` and a prompt.
-
-Optional local checks / git hook:
-
-```bash
-./scripts/check.sh          # black, ruff, mypy, guard greps, pytest --cov
-chmod +x .githooks/pre-commit
-ln -sf "$(pwd)/.githooks/pre-commit" .git/hooks/pre-commit
-```
+Optional: `./scripts/check.sh` and `.githooks/pre-commit`.
 
 ## Security
 
-- Keep `.env` and `config.toml` out of git (already gitignored). Never commit tokens or API keys.
-- Only Telegram user IDs in `allowed_sender_ids` can talk to the bot.
+- Keep `.env` out of git (already gitignored). Never commit tokens or API keys.
+- Only Telegram user IDs in `ALLOWED_SENDER_IDS` / `allowed_sender_ids` can talk to the bot.
 - In `standard` mode the agent can run shell with sandbox off — treat `CURSOR_API_KEY` (and anything else in the process environment) as **leakable**. Do not ask the agent to dump `env` / `printenv`. Prefer a dedicated Cursor API key for this bot.
 - Give the bot its **own** Telegram token. Do not share a token with another polling process (Telegram allows only one `getUpdates` consumer per bot).
 

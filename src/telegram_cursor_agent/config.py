@@ -1,7 +1,8 @@
-"""Deployment config loaded from config.toml (gitignored, see config.example.toml)."""
+"""Deployment config from config.toml and/or environment variables."""
 
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +45,40 @@ def build_session_header(*, template: str, workspace: Path, mode: str, model: st
     )
 
 
+def _parse_sender_ids(raw: str) -> frozenset[int]:
+    ids = [part.strip() for part in raw.split(",") if part.strip()]
+    if not ids:
+        raise ValueError("ALLOWED_SENDER_IDS is empty")
+    return frozenset(int(part) for part in ids)
+
+
+def load_config_from_env() -> Config:
+    """Build config from env — enough for Docker with no config.toml."""
+    try:
+        senders = _parse_sender_ids(os.environ["ALLOWED_SENDER_IDS"])
+    except KeyError as err:
+        raise ValueError(
+            "No config.toml found; set ALLOWED_SENDER_IDS (and usually WORKSPACE_PATH=/workspace)"
+        ) from err
+    header_raw = os.environ.get("SESSION_HEADER_TEMPLATE")
+    if header_raw is None:
+        header_template: str | None = DEFAULT_SESSION_HEADER_TEMPLATE
+    elif header_raw == "":
+        header_template = None
+    else:
+        header_template = header_raw
+    return Config(
+        workspace_path=Path(os.environ.get("WORKSPACE_PATH", "/workspace")).expanduser(),
+        allowed_sender_ids=senders,
+        default_model=os.environ.get("DEFAULT_MODEL", "claude-sonnet-5"),
+        default_perms_mode=os.environ.get("DEFAULT_PERMS_MODE", "standard"),
+        perms_dir=Path(os.environ.get("PERMS_DIR", "./perms")),
+        session_store_dir=Path(os.environ.get("SESSION_STORE_DIR", "./data")),
+        session_header_template=header_template,
+        model_aliases=dict(DEFAULT_MODEL_ALIASES),
+    )
+
+
 def load_config(path: Path) -> Config:
     with path.open("rb") as f:
         data = tomllib.load(f)
@@ -67,3 +102,11 @@ def load_config(path: Path) -> Config:
         session_header_template=header_template,
         model_aliases=aliases,
     )
+
+
+def resolve_config(path: Path | None = None) -> Config:
+    """Prefer config.toml when present; otherwise env (Docker / no-clone)."""
+    config_path = path if path is not None else Path(os.environ.get("TCA_CONFIG", "config.toml"))
+    if config_path.is_file():
+        return load_config(config_path)
+    return load_config_from_env()
