@@ -1,5 +1,7 @@
 # telegram-cursor-agent
 
+Demo and FAQ at: [https://tinthe.dev/telegram-cursor-agent](https://tinthe.dev/telegram-cursor-agent)
+
 A minimal, non-autonomous Telegram bridge to the Cursor SDK — tool use, doc
 writing, and git check-in/commit from a phone, gated by explicit, switchable
 permission modes rather than open-ended autonomy.
