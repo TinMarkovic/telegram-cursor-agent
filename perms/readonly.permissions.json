@@ -1,0 +1,15 @@
+{
+  "terminalAllowlist": [
+    "git:status",
+    "git:diff",
+    "git:log",
+    "git:show"
+  ],
+  "mcpAllowlist": [],
+  "autoRun": {
+    "allow_instructions": [],
+    "block_instructions": [
+      "Never run git add, git commit, git push, or any write/mutate command."
+    ]
+  }
+}

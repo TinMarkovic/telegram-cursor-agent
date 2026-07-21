@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environment
+.venv/
+venv/
+
+# Tooling caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Project-specific: per-deployment config and secrets, never committed
+.env
+config.toml
+data/
+
+# LLM working folder — private second brain, never committed
+llm/
+
+# Private ops skill (Tin server access) — keep locally, never publish
+.cursor/skills/ssh-server-access/
+
+# Editor/OS
+.DS_Store

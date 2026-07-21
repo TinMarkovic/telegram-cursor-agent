@@ -1,0 +1,59 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "telegram-cursor-agent"
+version = "0.2.5"
+description = "A minimal, non-autonomous Telegram bridge to the Cursor SDK."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+authors = [{ name = "Tin Markovic" }]
+dependencies = [
+    "python-telegram-bot>=21",
+    "cursor-sdk>=1.0.24",
+    "python-dotenv",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "ruff",
+    "mypy",
+    "pytest",
+    "pytest-cov",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/telegram_cursor_agent"]
+
+[tool.black]
+line-length = 120
+target-version = ["py312"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "T20", "PIE", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["T20"]
+"scripts/**" = ["T20", "RUF001", "RUF002", "SIM105"]
+
+[tool.mypy]
+python_version = "3.12"
+check_untyped_defs = true
+disallow_untyped_defs = true
+warn_return_any = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["src/telegram_cursor_agent"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 70

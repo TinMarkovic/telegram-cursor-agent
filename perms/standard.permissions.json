@@ -1,0 +1,18 @@
+{
+  "terminalAllowlist": [
+    "git",
+    "black",
+    "ruff",
+    "pytest",
+    "./scripts/"
+  ],
+  "mcpAllowlist": [],
+  "autoRun": {
+    "allow_instructions": [
+      "Allow in-repo git add, commit, and push when the user asks."
+    ],
+    "block_instructions": [
+      "Never run sudo, systemctl, or commands that modify files outside the workspace repo."
+    ]
+  }
+}

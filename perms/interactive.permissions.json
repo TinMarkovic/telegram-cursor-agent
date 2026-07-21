@@ -1,0 +1,8 @@
+{
+  "terminalAllowlist": [],
+  "mcpAllowlist": [],
+  "autoRun": {
+    "allow_instructions": [],
+    "block_instructions": []
+  }
+}

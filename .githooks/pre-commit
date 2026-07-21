@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+if [[ -n "${GIT_WORK_TREE:-}" ]]; then
+    PROJECT_DIR="${GIT_WORK_TREE}"
+else
+    REAL_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
+    PROJECT_DIR="$(cd "$(dirname "$REAL_SCRIPT")/.." && pwd)"
+fi
+echo "Running pre-commit checks..."
+exec "$PROJECT_DIR/scripts/check.sh"
