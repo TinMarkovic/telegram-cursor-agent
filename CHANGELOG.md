@@ -6,6 +6,8 @@ versioning is [SemVer](https://semver.org/) in `pyproject.toml`.
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-07-21
+
 ### Fixed
 
 - Docker: set system `safe.directory` and drop to uid 1000 so git works on host-owned bind mounts and `/status` / `readonly` `guard_writes` no longer silently no-op.
@@ -15,16 +17,12 @@ versioning is [SemVer](https://semver.org/) in `pyproject.toml`.
 
 ### Changed
 
+- Simplify Docker deploy to env-only (no clone required); `compose.yml` + GHCR image path.
+- Use-first README: Quickstart and workflows near the top; full Model IDs catalog at the bottom.
 - Stop publishing maintainer `.cursor/` rules/skills (they referenced private `llm/`); keep them local via `.gitignore`.
 - Remove private staging harness `scripts/verify-persistent-session-staging.py` from the public tree.
 - Document that multiple allowlisted senders share one agent session.
 - Add `SECURITY.md`, `CONTRIBUTING.md`, and this changelog.
-
-## [0.2.7] - 2026-07-21
-
-### Changed
-
-- Simplify Docker deploy to env-only (no clone required); `compose.yml` + GHCR image path.
 
 ## [0.2.6] - 2026-07
 
