@@ -6,6 +6,12 @@ versioning is [SemVer](https://semver.org/) in `pyproject.toml`.
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-09-01
+
+### Fixed
+
+- Stop forcing `LocalAgentStoreConfig(type="jsonl")`. Long-lived local store is SQLite under `{session_store_dir}/agents/` (SDK default for Node >= 22.13). JSONL rewrite-all+fsync was the ~400ms/event drip on a grown store. Not a live migrate — archive `*.ndjson` and `/new` after upgrade.
+
 ## [0.2.7] - 2026-07-21
 
 ### Fixed

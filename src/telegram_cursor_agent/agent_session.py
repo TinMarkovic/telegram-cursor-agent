@@ -1,4 +1,4 @@
-"""Persistent Cursor agent session — jsonl store, sidecar state, bridge retry."""
+"""Persistent Cursor agent session — sqlite store, sidecar state, bridge retry."""
 
 from __future__ import annotations
 
@@ -183,7 +183,7 @@ class SessionManager:
             setting_sources=list(sources),
             auto_review=auto_review_for_mode(mode),
             sandbox_options=SandboxOptions(enabled=sandbox_enabled_for_mode(mode)),
-            store=LocalAgentStoreConfig(type="jsonl", root_dir=str(self._store_root)),
+            store=LocalAgentStoreConfig(type="sqlite", root_dir=str(self._store_root)),
         )
 
     async def relaunch_bridge(self) -> None:

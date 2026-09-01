@@ -13,7 +13,7 @@ Clone it, write your own config, point it at your own repo.
 
 **Status:** persistent session shipped — polling bot, sender allowlist, `/status`,
 `/perms`, `/new`, `/cancel`, `locked`/`readonly`/`standard` modes, conversation
-survives restarts via jsonl store + sidecar. See [Roadmap](#roadmap).
+survives restarts via sqlite store + sidecar. See [Roadmap](#roadmap).
 
 ## What it does
 

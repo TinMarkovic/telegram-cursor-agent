@@ -2,9 +2,10 @@ import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from cursor_sdk import LocalAgentStoreConfig
 from cursor_sdk.errors import CursorAgentError, InternalServerError, UnsupportedRunOperationError
 
 from telegram_cursor_agent.agent_session import (
@@ -54,6 +55,38 @@ def manager(tmp_path: Path) -> SessionManager:
 def test_session_state_property_requires_start(manager: SessionManager) -> None:
     with pytest.raises(RuntimeError, match="session not started"):
         _ = manager.state
+
+
+def test_local_options_uses_sqlite_store(manager: SessionManager) -> None:
+    opts = manager._local_options()
+    store = opts.store
+    assert isinstance(store, LocalAgentStoreConfig)
+    assert store.type == "sqlite"
+    assert store.root_dir == str(manager._store_root)
+
+
+def test_start_resume_failure_creates_fresh(manager: SessionManager) -> None:
+    save_state(
+        manager._state_path,
+        SessionState(
+            chat_id=111111111,
+            agent_id="stale-jsonl-agent",
+            model="claude-sonnet-5",
+            perms_mode="standard",
+        ),
+    )
+    client = AsyncMock()
+    client.resume_agent = AsyncMock(side_effect=CursorAgentError("no such agent", code="not_found"))
+    fresh = AsyncMock()
+    fresh.agent_id = "fresh-sqlite"
+    client.create_agent = AsyncMock(return_value=fresh)
+
+    with patch("telegram_cursor_agent.agent_session.AsyncClient.launch_bridge", AsyncMock(return_value=client)):
+        asyncio.run(manager.start())
+
+    client.resume_agent.assert_awaited_once()
+    client.create_agent.assert_awaited_once()
+    assert manager.state.agent_id == "fresh-sqlite"
 
 
 def test_update_runtime_state_persists_perms_mode(manager: SessionManager, tmp_path: Path) -> None:
