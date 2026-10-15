@@ -1,4 +1,4 @@
-"""Telegram polling bot — sender allowlist, persistent agent session, /status, /perms."""
+"""Telegram polling bot — sender allowlist, persistent agent session, /status, /perms, /reset."""
 
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ BOT_COMMANDS: tuple[BotCommand, ...] = (
     BotCommand("perms", "Show or switch permission mode"),
     BotCommand("new", "Fresh agent session; optional model"),
     BotCommand("cancel", "Cancel the in-flight agent run"),
+    BotCommand("reset", "Same conversation, new bridge; closes a wedged run"),
 )
 
 logging.basicConfig(
@@ -55,9 +56,15 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     config: Config = context.bot_data["config"]
     mode: str = context.bot_data["perms_mode"]
     model: str = context.bot_data["model"]
-    reply = status.build_status(workspace_path=config.workspace_path, mode=mode, model=model)
+    reply = status.build_status(
+        workspace_path=config.workspace_path,
+        mode=mode,
+        model=model,
+        bridge=_session(context).bridge_snapshot(),
+    )
     log.info("status requested (mode=%s, model=%s)", mode, model)
-    await update.message.reply_text(reply)
+    for chunk in _split_for_telegram(reply):
+        await update.message.reply_text(chunk)
 
 
 async def cmd_perms(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -107,7 +114,28 @@ async def cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     context.bot_data["model"] = _session(context).state.model
-    await update.message.reply_text(reply)
+    for chunk in _split_for_telegram(reply):
+        await update.message.reply_text(chunk)
+
+
+async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message is None:
+        return
+    try:
+        reply = await _session(context).reset()
+    except CursorAgentError as err:
+        log.error("reset failed: %s", err.message)
+        await update.message.reply_text(f"Agent call failed: {err.message}"[:TELEGRAM_MESSAGE_LIMIT])
+        return
+    except Exception as err:
+        log.exception("reset unexpected error")
+        await update.message.reply_text(f"Unexpected error: {type(err).__name__}: {err}"[:TELEGRAM_MESSAGE_LIMIT])
+        return
+    session = _session(context)
+    context.bot_data["model"] = session.state.model
+    context.bot_data["perms_mode"] = session.state.perms_mode
+    for chunk in _split_for_telegram(reply):
+        await update.message.reply_text(chunk)
 
 
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -225,6 +253,7 @@ def main() -> None:
     app.add_handler(CommandHandler("perms", cmd_perms, filters=allowlist))
     app.add_handler(CommandHandler("new", cmd_new, filters=allowlist))
     app.add_handler(CommandHandler("cancel", cmd_cancel, filters=allowlist))
+    app.add_handler(CommandHandler("reset", cmd_reset, filters=allowlist))
     app.add_handler(MessageHandler(allowlist & filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(on_error)
 

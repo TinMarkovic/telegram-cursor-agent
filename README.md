@@ -12,7 +12,7 @@ is allowed, which permission profile to run — is external configuration.
 Clone it, write your own config, point it at your own repo.
 
 **Status:** persistent session shipped — polling bot, sender allowlist, `/status`,
-`/perms`, `/new`, `/cancel`, `locked`/`readonly`/`standard` modes, conversation
+`/perms`, `/new`, `/cancel`, `/reset`, `locked`/`readonly`/`standard` modes, conversation
 survives restarts via sqlite store + sidecar. See [Roadmap](#roadmap).
 
 ## What it does
@@ -78,7 +78,8 @@ Prefer the published GHCR image unless you are changing the bot itself.
 ## Example workflows
 
 Typical session: `/status` → set mode with `/perms` → freeform prompts →
-`/new` when context gets muddy → `/cancel` if a run hangs.
+`/new` when context gets muddy → `/cancel` if a run hangs → `/reset` if the
+bridge died and you want the same conversation on a new process.
 
 ```
 /status
@@ -124,12 +125,13 @@ as a freeform prompt.
 
 | Command | Args | What it does |
 |---------|------|--------------|
-| `/status` | — | Repo snapshot without calling the agent: active mode, model, last commit, `git status --short`, bot uptime. |
+| `/status` | — | Repo snapshot without calling the agent: active mode, model, last commit, `git status --short`, bot uptime, and whether `cursor-sdk-bridge` is up (pid, uptime, last exit, stderr tail). |
 | `/perms` | — | Report current mode, model, and available modes. |
 | `/perms` | `<mode>` | Switch mode (`locked`, `readonly`, or `standard`). |
 | `/new` | — | Fresh agent session, same model. Conversation history resets. |
 | `/new` | `<model>` | Same, but switch model first. Aliases: `s5` → Sonnet 5, `c25` → Composer 2.5, `op` → Opus 4.8. Full list: [Model IDs](#model-ids). |
-| `/cancel` | — | Cancel an in-flight agent run. No-op if nothing is running. |
+| `/cancel` | — | Cancel an in-flight agent run. No-op if nothing is running. A dead bridge still answers that nothing is running. |
+| `/reset` | — | Same conversation, new bridge. Closes a wedged run and resumes the current agent. |
 
 While the agent runs: Telegram **typing** indicator stays active, a `working on it…`
 message appears, and every **2 minutes** that message is edited with progress.

@@ -1,12 +1,15 @@
 import asyncio
 import json
+import sqlite3
+import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from cursor_sdk import LocalAgentStoreConfig
-from cursor_sdk.errors import CursorAgentError, InternalServerError, UnsupportedRunOperationError
+from cursor_sdk.errors import CursorAgentError, InternalServerError, NetworkError, UnsupportedRunOperationError
 
 from telegram_cursor_agent.agent_session import (
     BRIDGE_TOKEN_BUG,
@@ -20,8 +23,40 @@ from telegram_cursor_agent.agent_session import (
     validate_model,
     with_bridge_retry,
 )
+from telegram_cursor_agent.bridge import BridgeWatch
 from telegram_cursor_agent.config import DEFAULT_SESSION_HEADER_TEMPLATE, Config
 from telegram_cursor_agent.models import DEFAULT_MODEL_ALIASES
+
+DISCONNECT = NetworkError("Bridge request failed: ConnectError: All connection attempts failed")
+
+
+def _write_index(
+    path: Path,
+    *,
+    agents: list[tuple[str, str, str | None]],
+    runs: list[tuple[str, str, str]],
+    events: list[tuple[str, int, str, str]] | None = None,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.executescript("""
+        CREATE TABLE agents (
+            agent_id TEXT PRIMARY KEY, status TEXT, active_run_id TEXT, updated_at TEXT
+        );
+        CREATE TABLE runs (
+            run_id TEXT PRIMARY KEY, agent_id TEXT, status TEXT, error_code TEXT, updated_at TEXT
+        );
+        CREATE TABLE run_events (run_id TEXT, event_type TEXT, payload_json TEXT);
+        """)
+    conn.executemany("INSERT INTO agents (agent_id, status, active_run_id) VALUES (?, ?, ?)", agents)
+    conn.executemany("INSERT INTO runs (run_id, agent_id, status) VALUES (?, ?, ?)", runs)
+    if events:
+        conn.executemany(
+            "INSERT INTO run_events (run_id, event_type, payload_json) VALUES (?, ?, ?)",
+            [(run_id, event_type, payload) for run_id, _seq, event_type, payload in events],
+        )
+    conn.commit()
+    conn.close()
 
 
 def _run_result(status: str, result: str | None = None, run_id: str = "run-1") -> SimpleNamespace:
@@ -405,3 +440,396 @@ def test_wrap_with_session_header_prepends_once(manager: SessionManager) -> None
     assert wrapped.endswith("hello")
     assert manager._state.header_sent is True
     assert manager._wrap_with_session_header("again") == "again"
+
+
+def _arm_dead_bridge(manager: SessionManager) -> None:
+    watch = BridgeWatch(pid=42)
+    watch.record_exit(-9)
+    manager._watch = watch
+    manager._state = SessionState(
+        chat_id=1,
+        agent_id="agent-a",
+        model="claude-sonnet-5",
+        perms_mode="standard",
+        header_sent=True,
+    )
+
+
+def _raise_if_wedged(manager: SessionManager, agent_id: str) -> None:
+    conn = sqlite3.connect(manager._index_db())
+    row = conn.execute("SELECT active_run_id FROM agents WHERE agent_id = ?", (agent_id,)).fetchone()
+    active = None if row is None else row[0]
+    run_status = None
+    if active:
+        run = conn.execute("SELECT status FROM runs WHERE run_id = ?", (active,)).fetchone()
+        run_status = None if run is None else run[0]
+    conn.close()
+    if active and run_status not in ("FINISHED", "ERROR", "CANCELLED", "EXPIRED"):
+        raise CursorAgentError(f"Agent {agent_id} already has active run")
+
+
+def _seed_live_and_sibling(manager: SessionManager, *, tool: bool = False) -> None:
+    events = [("run-dead", 1, "sdk", '{"type":"tool_call","name":"shell"}')] if tool else None
+    _write_index(
+        manager._index_db(),
+        agents=[("agent-a", "RUNNING", "run-dead"), ("agent-572f452f", "RUNNING", "run-old")],
+        runs=[("run-dead", "agent-a", "RUNNING"), ("run-old", "agent-572f452f", "RUNNING")],
+        events=events,
+    )
+
+
+def _sibling_still_running(manager: SessionManager) -> None:
+    conn = sqlite3.connect(manager._index_db())
+    row = conn.execute("SELECT status, active_run_id FROM agents WHERE agent_id = 'agent-572f452f'").fetchone()
+    conn.close()
+    assert row == ("RUNNING", "run-old")
+
+
+def _disconnect_run(run_id: str) -> AsyncMock:
+    run = AsyncMock()
+    run.id = run_id
+    run.wait = AsyncMock(side_effect=DISCONNECT)
+    return run
+
+
+def test_follow_up_after_exit_relaunches_once_without_active_run_error(manager: SessionManager) -> None:
+    _seed_live_and_sibling(manager)
+    _arm_dead_bridge(manager)
+    old = AsyncMock()
+    old.close = AsyncMock()
+    old.send = AsyncMock(return_value=_disconnect_run("run-dead"))
+    manager._agent = old
+    manager._client = AsyncMock()
+    launches = {"n": 0}
+    resumed = AsyncMock()
+    resumed.agent_id = "agent-a"
+    resumed.close = AsyncMock()
+    ok_run = AsyncMock()
+    ok_run.id = "run-ok"
+    ok_run.wait = AsyncMock(return_value=_run_result("finished", "ok"))
+    resumed.send = AsyncMock(return_value=ok_run)
+    holder: dict[str, AsyncMock] = {}
+
+    async def launch(*_args: object, **_kwargs: object) -> AsyncMock:
+        launches["n"] += 1
+        client = AsyncMock()
+        holder["client"] = client
+
+        async def resume(agent_id: str, options: object = None) -> AsyncMock:
+            _raise_if_wedged(manager, agent_id)
+            return resumed
+
+        client.resume_agent = resume
+        client.aclose = AsyncMock()
+        client.create_agent = AsyncMock()
+        return client
+
+    with patch("telegram_cursor_agent.agent_session.AsyncClient.launch_bridge", launch):
+        reply = asyncio.run(manager.send_and_wait("hi"))
+
+    assert launches["n"] == 1
+    assert reply.startswith("bridge restarted")
+    assert "ok" in reply
+    assert old.send.await_count == 1
+    assert resumed.send.await_count == 1
+    holder["client"].create_agent.assert_not_awaited()
+    _sibling_still_running(manager)
+
+
+def test_dead_run_with_tool_call_is_not_resent(manager: SessionManager) -> None:
+    _seed_live_and_sibling(manager, tool=True)
+    _arm_dead_bridge(manager)
+    old = AsyncMock()
+    old.close = AsyncMock()
+    old.send = AsyncMock(return_value=_disconnect_run("run-dead"))
+    manager._agent = old
+    manager._client = AsyncMock()
+    resumed = AsyncMock()
+    resumed.agent_id = "agent-a"
+    resumed.close = AsyncMock()
+    resumed.send = AsyncMock()
+
+    async def launch(*_args: object, **_kwargs: object) -> AsyncMock:
+        client = AsyncMock()
+
+        async def resume(agent_id: str, options: object = None) -> AsyncMock:
+            _raise_if_wedged(manager, agent_id)
+            return resumed
+
+        client.resume_agent = resume
+        client.aclose = AsyncMock()
+        client.create_agent = AsyncMock()
+        return client
+
+    with patch("telegram_cursor_agent.agent_session.AsyncClient.launch_bridge", launch):
+        reply = asyncio.run(manager.send_and_wait("hi"))
+
+    assert "resend" in reply
+    resumed.send.assert_not_awaited()
+    assert old.send.await_count == 1
+
+
+def test_second_bridge_failure_does_not_spawn_a_third(manager: SessionManager) -> None:
+    _seed_live_and_sibling(manager)
+    _arm_dead_bridge(manager)
+    old = AsyncMock()
+    old.close = AsyncMock()
+    old.send = AsyncMock(return_value=_disconnect_run("run-dead"))
+    manager._agent = old
+    manager._client = AsyncMock()
+    launches = {"n": 0}
+    resumed = AsyncMock()
+    resumed.agent_id = "agent-a"
+    resumed.close = AsyncMock()
+    resumed.send = AsyncMock(return_value=_disconnect_run("run-2"))
+
+    async def launch(*_args: object, **_kwargs: object) -> AsyncMock:
+        launches["n"] += 1
+        client = AsyncMock()
+
+        async def resume(agent_id: str, options: object = None) -> AsyncMock:
+            _raise_if_wedged(manager, agent_id)
+            return resumed
+
+        client.resume_agent = resume
+        client.aclose = AsyncMock()
+        client.create_agent = AsyncMock()
+        return client
+
+    with patch("telegram_cursor_agent.agent_session.AsyncClient.launch_bridge", launch):
+        reply = asyncio.run(manager.send_and_wait("hi"))
+
+    assert launches["n"] == 1
+    assert "ConnectError" in reply
+    assert "bridge exit:" in reply
+    assert resumed.send.await_count == 1
+
+
+def test_overlapping_recoveries_relaunch_once(manager: SessionManager) -> None:
+    _arm_dead_bridge(manager)
+    _seed_live_and_sibling(manager)
+    old = AsyncMock()
+    old.close = AsyncMock()
+    old.send = AsyncMock(side_effect=DISCONNECT)
+    manager._agent = old
+    manager._client = AsyncMock()
+    launches = {"n": 0}
+    resumed = AsyncMock()
+    resumed.agent_id = "agent-a"
+    resumed.close = AsyncMock()
+    ok_run = AsyncMock()
+    ok_run.id = "run-ok"
+    ok_run.wait = AsyncMock(return_value=_run_result("finished", "ok"))
+    resumed.send = AsyncMock(return_value=ok_run)
+
+    async def launch(*_args: object, **_kwargs: object) -> AsyncMock:
+        launches["n"] += 1
+        await asyncio.sleep(0.05)
+        client = AsyncMock()
+
+        async def resume(agent_id: str, options: object = None) -> AsyncMock:
+            _raise_if_wedged(manager, agent_id)
+            return resumed
+
+        client.resume_agent = resume
+        client.aclose = AsyncMock()
+        client.create_agent = AsyncMock()
+        return client
+
+    async def both() -> tuple[str, str]:
+        pair = await asyncio.gather(manager.send_and_wait("a"), manager.send_and_wait("b"))
+        return cast(tuple[str, str], pair)
+
+    with patch("telegram_cursor_agent.agent_session.AsyncClient.launch_bridge", launch):
+        first, second = asyncio.run(both())
+
+    assert launches["n"] == 1
+    assert first.startswith("bridge restarted")
+    assert second == "ok"
+
+
+def test_reset_resumes_same_agent_when_bridge_is_down(manager: SessionManager) -> None:
+    _seed_live_and_sibling(manager)
+    _arm_dead_bridge(manager)
+    manager._agent = AsyncMock()
+    manager._agent.close = AsyncMock()
+    manager._client = AsyncMock()
+    holder: dict[str, AsyncMock] = {}
+
+    async def launch(*_args: object, **_kwargs: object) -> AsyncMock:
+        client = AsyncMock()
+        holder["client"] = client
+        resumed = AsyncMock()
+        resumed.agent_id = "agent-a"
+        resumed.close = AsyncMock()
+
+        async def resume(agent_id: str, options: object = None) -> AsyncMock:
+            _raise_if_wedged(manager, agent_id)
+            return resumed
+
+        client.resume_agent = resume
+        client.aclose = AsyncMock()
+        client.create_agent = AsyncMock()
+        return client
+
+    with patch("telegram_cursor_agent.agent_session.AsyncClient.launch_bridge", launch):
+        reply = asyncio.run(manager.reset())
+
+    assert "was down" in reply
+    assert "resumed agent-a" in reply
+    assert "mode: standard" in reply
+    assert "model: claude-sonnet-5" in reply
+    holder["client"].create_agent.assert_not_awaited()
+    _sibling_still_running(manager)
+
+
+def test_start_closes_running_row_before_resume(manager: SessionManager) -> None:
+    _seed_live_and_sibling(manager)
+    save_state(
+        manager._state_path,
+        SessionState(chat_id=111111111, agent_id="agent-a", model="claude-sonnet-5", perms_mode="standard"),
+    )
+
+    async def launch(*_args: object, **_kwargs: object) -> AsyncMock:
+        client = AsyncMock()
+        resumed = AsyncMock()
+        resumed.agent_id = "agent-a"
+        resumed.close = AsyncMock()
+
+        async def resume(agent_id: str, options: object = None) -> AsyncMock:
+            _raise_if_wedged(manager, agent_id)
+            return resumed
+
+        client.resume_agent = resume
+        client.create_agent = AsyncMock()
+        return client
+
+    with patch("telegram_cursor_agent.agent_session.AsyncClient.launch_bridge", launch):
+        asyncio.run(manager.start())
+
+    assert manager.state.agent_id == "agent-a"
+    conn = sqlite3.connect(manager._index_db())
+    live = conn.execute("SELECT status, active_run_id FROM agents WHERE agent_id = 'agent-a'").fetchone()
+    conn.close()
+    assert live == ("IDLE", None)
+    _sibling_still_running(manager)
+
+
+def test_cancel_on_dead_bridge_relaunches_and_reports_nothing_to_cancel(manager: SessionManager) -> None:
+    _seed_live_and_sibling(manager)
+    _arm_dead_bridge(manager)
+    manager._client = AsyncMock()
+    manager._agent = AsyncMock()
+    manager._agent.close = AsyncMock()
+    launches = {"n": 0}
+
+    async def launch(*_args: object, **_kwargs: object) -> AsyncMock:
+        launches["n"] += 1
+        client = AsyncMock()
+        resumed = AsyncMock()
+        resumed.agent_id = "agent-a"
+        resumed.close = AsyncMock()
+
+        async def resume(agent_id: str, options: object = None) -> AsyncMock:
+            _raise_if_wedged(manager, agent_id)
+            return resumed
+
+        client.resume_agent = resume
+        client.aclose = AsyncMock()
+        return client
+
+    with patch("telegram_cursor_agent.agent_session.AsyncClient.launch_bridge", launch):
+        cancelled = asyncio.run(manager.cancel_in_flight())
+
+    assert cancelled is False
+    assert launches["n"] == 1
+
+
+def test_internal_server_error_does_not_relaunch_bridge(manager: SessionManager) -> None:
+    ok_run = AsyncMock()
+    ok_run.wait = AsyncMock(return_value=_run_result("finished", "ok"))
+    agent = AsyncMock()
+    agent.send = AsyncMock(side_effect=InternalServerError("boom"))
+    agent.close = AsyncMock()
+    manager._agent = agent
+    manager._state = SessionState(
+        chat_id=1, agent_id="agent-a", model="claude-sonnet-5", perms_mode="standard", header_sent=True
+    )
+    resumed = AsyncMock()
+    resumed.agent_id = "agent-a"
+    resumed.send = AsyncMock(return_value=ok_run)
+    manager._client = AsyncMock()
+    manager._client.resume_agent = AsyncMock(return_value=resumed)
+
+    async def launch(*_args: object, **_kwargs: object) -> AsyncMock:
+        raise AssertionError("bridge relaunch")
+
+    with patch("telegram_cursor_agent.agent_session.AsyncClient.launch_bridge", launch):
+        assert asyncio.run(manager.send_and_wait("hi")) == "ok"
+
+
+def test_idle_bridge_exit_relaunches_once(manager: SessionManager) -> None:
+    manager._state = SessionState(
+        chat_id=1, agent_id="agent-a", model="claude-sonnet-5", perms_mode="standard", header_sent=True
+    )
+
+    async def scenario() -> AsyncMock:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            "import sys; sys.exit(3)",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        manager._client = AsyncMock()
+        manager._client._owned_bridge = SimpleNamespace(process=proc, endpoint=SimpleNamespace(pid=proc.pid))
+        relaunch = AsyncMock(return_value="resumed")
+        manager._relaunch_unlocked = relaunch
+        manager._attach_watch()
+        assert manager._watch_task is not None
+        await asyncio.wait_for(manager._watch_task, timeout=5)
+        return relaunch
+
+    relaunch = asyncio.run(scenario())
+
+    relaunch.assert_awaited_once()
+    assert manager._watch is not None
+    assert manager._watch.exit_code == 3
+
+
+def test_new_session_disconnect_relaunches_once(manager: SessionManager) -> None:
+    manager._state = SessionState(
+        chat_id=1, agent_id="agent-a", model="claude-sonnet-5", perms_mode="standard", header_sent=True
+    )
+    known = [type("M", (), {"id": "claude-sonnet-5"})()]
+    old = AsyncMock()
+    old.list_models = AsyncMock(return_value=known)
+    old.create_agent = AsyncMock(side_effect=DISCONNECT)
+    old.aclose = AsyncMock()
+    manager._client = old
+    manager._agent = AsyncMock()
+    manager._agent.close = AsyncMock()
+    launches = {"n": 0}
+    created = AsyncMock()
+    created.agent_id = "agent-b"
+    created.close = AsyncMock()
+
+    async def launch(*_args: object, **_kwargs: object) -> AsyncMock:
+        launches["n"] += 1
+        client = AsyncMock()
+        client.list_models = AsyncMock(return_value=known)
+        client.create_agent = AsyncMock(return_value=created)
+        resumed = AsyncMock()
+        resumed.agent_id = "agent-a"
+        resumed.close = AsyncMock()
+        client.resume_agent = AsyncMock(return_value=resumed)
+        client.aclose = AsyncMock()
+        return client
+
+    with patch("telegram_cursor_agent.agent_session.AsyncClient.launch_bridge", launch):
+        reply = asyncio.run(manager.new_session(None))
+
+    assert launches["n"] == 1
+    assert reply.startswith("bridge restarted")
+    assert "new session started (model=claude-sonnet-5)" in reply
+    assert manager.state.agent_id == "agent-b"

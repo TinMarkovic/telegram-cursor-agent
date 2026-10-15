@@ -6,6 +6,12 @@ versioning is [SemVer](https://semver.org/) in `pyproject.toml`.
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-10-15
+
+### Fixed
+
+- A dead `cursor-sdk-bridge` is logged, the wedged sqlite run is closed, `/status` shows the bridge, and the next message or `/reset` relaunches once.
+
 ## [0.2.8] - 2026-09-01
 
 ### Fixed

@@ -20,9 +20,11 @@ from telegram_cursor_agent.bot import (
     cmd_cancel,
     cmd_new,
     cmd_perms,
+    cmd_reset,
     cmd_status,
     handle_message,
 )
+from telegram_cursor_agent.bridge import BridgeSnapshot
 from telegram_cursor_agent.config import DEFAULT_SESSION_HEADER_TEMPLATE, Config
 from telegram_cursor_agent.models import DEFAULT_MODEL_ALIASES
 
@@ -138,7 +140,14 @@ def test_split_for_telegram_splits_and_rejoins_losslessly() -> None:
 def test_cmd_status_replies_without_agent_call(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     message = _fake_text_message("/status")
-    context = _fake_context({"config": config, "perms_mode": "standard", "model": "claude-sonnet-5"})
+    session = SimpleNamespace(
+        bridge_snapshot=lambda: BridgeSnapshot(
+            up=False, pid=42, uptime_s=3, exit_code=None, signal=9, stderr_tail="tail"
+        )
+    )
+    context = _fake_context(
+        {"config": config, "perms_mode": "standard", "model": "claude-sonnet-5", "session": session}
+    )
 
     asyncio.run(cmd_status(_fake_update(message), context))
 
@@ -146,6 +155,8 @@ def test_cmd_status_replies_without_agent_call(tmp_path: Path) -> None:
     reply = message.reply_text.await_args.args[0]
     assert "mode: standard" in reply
     assert "model: claude-sonnet-5" in reply
+    assert "bridge: down" in reply
+    assert "signal=9" in reply
 
 
 def test_cmd_perms_no_args_reports_state() -> None:
@@ -234,6 +245,46 @@ def test_cmd_cancel_no_op_when_idle(tmp_path: Path) -> None:
 
     session.cancel_in_flight.assert_awaited_once()
     message.reply_text.assert_awaited_once_with("no in-flight run to cancel")
+
+
+def test_cmd_reset_replies_with_session_text() -> None:
+    async def reset() -> str:
+        return "bridge restarted (was down)\nresumed agent-a\nmode: standard\nmodel: claude-sonnet-5"
+
+    session = _fake_session()
+    session.reset = reset
+    context = _fake_context({"session": session, "model": "old", "perms_mode": "old"})
+    message = _fake_text_message("/reset")
+
+    asyncio.run(cmd_reset(_fake_update(message), context))
+
+    reply = message.reply_text.await_args.args[0]
+    assert "was down" in reply
+    assert "resumed agent-a" in reply
+    assert "mode: standard" in reply
+    assert context.bot_data["model"] == "claude-sonnet-5"
+    assert context.bot_data["perms_mode"] == "standard"
+
+
+def test_handle_message_bridge_failure_includes_exit_and_fits_telegram(tmp_path: Path) -> None:
+    text = (
+        "Agent call failed: Bridge request failed: ConnectError: All connection attempts failed\n"
+        "bridge exit: pid=5 code=none signal=9\n" + ("x" * 5000)
+    )
+    session = _fake_session(send_reply=text)
+    config = _make_config(tmp_path)
+    context = _fake_context(
+        {"config": config, "perms_mode": "standard", "model": "claude-sonnet-5", "session": session}
+    )
+    message = _fake_text_message("hello")
+
+    asyncio.run(handle_message(_fake_update(message), context))
+
+    chunks = [call.args[0] for call in message.reply_text.await_args_list]
+    assert chunks
+    assert all(len(chunk) <= TELEGRAM_MESSAGE_LIMIT for chunk in chunks)
+    assert "bridge exit:" in "".join(chunks)
+    assert "--tool-callback-auth-token" not in "".join(chunks)
 
 
 def test_cmd_cancel_reports_cancelled(tmp_path: Path) -> None:
@@ -327,7 +378,7 @@ def test_handle_message_reports_cursor_agent_error(monkeypatch: pytest.MonkeyPat
 
 
 def test_bot_commands_cover_slash_menu() -> None:
-    assert [c.command for c in BOT_COMMANDS] == ["status", "perms", "new", "cancel"]
+    assert [c.command for c in BOT_COMMANDS] == ["status", "perms", "new", "cancel", "reset"]
     assert all(c.description for c in BOT_COMMANDS)
 
 
