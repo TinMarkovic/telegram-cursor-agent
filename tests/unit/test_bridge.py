@@ -14,6 +14,7 @@ from telegram_cursor_agent.bridge import (
     close_wedged_run,
     is_bridge_disconnect,
     log_bridge_failure,
+    sdk_index_db,
     watch_bridge,
 )
 
@@ -169,6 +170,26 @@ def test_watch_bridge_records_signal_on_exit() -> None:
     assert snapshot.exit_code is None
     assert snapshot.signal == 9
     assert snapshot.pid == sink.pid
+
+
+def test_record_exit_maps_shell_wrapper_137_to_sigkill() -> None:
+    killed = BridgeWatch(pid=1)
+    killed.record_exit(137)
+    plain = BridgeWatch(pid=1)
+    plain.record_exit(1)
+
+    assert killed.exit_code is None
+    assert killed.signal == 9
+    assert plain.exit_code == 1
+    assert plain.signal is None
+
+
+def test_sdk_index_db_matches_cursor_sdk_default_layout() -> None:
+    path = sdk_index_db(Path("/root/projects/cursor_pa"), home=Path("/root"))
+
+    assert path == Path(
+        "/root/.cursor/projects/root-projects-cursor-pa/sdk-agent-store" "/2bd7fa1cf3753c792ebe7b5e589b93b3/index.db"
+    )
 
 
 def test_close_wedged_run_leaves_sibling_running(tmp_path: Path) -> None:

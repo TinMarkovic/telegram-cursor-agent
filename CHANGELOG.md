@@ -6,6 +6,12 @@ versioning is [SemVer](https://semver.org/) in `pyproject.toml`.
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-10-16
+
+### Fixed
+
+- Close a wedged run in the SDK's default `index.db` (`~/.cursor/projects/.../sdk-agent-store/`). `type="sqlite"` ignores `root_dir`. A shell-wrapper exit of 137 is reported as signal 9.
+
 ## [0.2.9] - 2026-10-15
 
 ### Fixed

@@ -30,6 +30,7 @@ from telegram_cursor_agent.bridge import (
     log_bridge_failure,
     resend_notice,
     run_dispatched_tool,
+    sdk_index_db,
     watch_bridge,
 )
 from telegram_cursor_agent.config import Config, build_session_header
@@ -206,7 +207,7 @@ class SessionManager:
         )
 
     def _index_db(self) -> Path:
-        return self._store_root / "index.db"
+        return sdk_index_db(self._config.workspace_path)
 
     def _owned_process(self) -> asyncio.subprocess.Process | None:
         client = self._client

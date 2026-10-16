@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import logging
+import os
+import re
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -59,12 +62,13 @@ class BridgeWatch:
         self._exit_at: float | None = None
 
     def record_exit(self, returncode: int) -> None:
-        if returncode < 0:
-            self.exit_code = None
-            self.signal = -returncode
-        else:
+        signal = _exit_signal(returncode)
+        if signal is None:
             self.exit_code = returncode
             self.signal = None
+        else:
+            self.exit_code = None
+            self.signal = signal
         self.exited = True
         self._exit_at = time.monotonic()
 
@@ -92,6 +96,38 @@ class BridgeWatch:
             signal=self.signal,
             stderr_tail=self.stderr_tail(),
         )
+
+
+def _exit_signal(returncode: int) -> int | None:
+    """Signal number for a dead child, or None when the status is an exit code.
+
+    The kernel reports a signal as a negative return code. The shell wrapper
+    we launch exits 128+n when node dies on signal n (137 is SIGKILL).
+    ponytail: a real exit code in 129..192 is shown as a signal. Upgrade path
+    is the node's own wait status, which the wrapper does not forward.
+    """
+    if returncode < 0:
+        return -returncode
+    wrapped = returncode - 128
+    if 0 < wrapped <= 64:
+        return wrapped
+    return None
+
+
+def sdk_index_db(workspace: Path, *, home: Path | None = None) -> Path:
+    """index.db the bridge opens when local.store type is sqlite.
+
+    cursor-sdk 1.0.24 ignores rootDir for sqlite and uses the default state
+    root. --state-root is discovery only.
+    ponytail: private layout, pinned by test_sdk_index_db_matches_cursor_sdk_default_layout.
+    Upgrade path is an SDK that returns the path it opened.
+    """
+    root = Path.home() if home is None else home
+    resolved = os.path.abspath(workspace)
+    slug = re.sub(r"[^a-zA-Z0-9]", "-", resolved)
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    digest = hashlib.md5(resolved.encode()).hexdigest()
+    return root / ".cursor" / "projects" / slug / "sdk-agent-store" / digest / "index.db"
 
 
 def redact_bridge_line(line: str) -> str | None:

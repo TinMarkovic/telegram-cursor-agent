@@ -64,7 +64,8 @@ def _run_result(status: str, result: str | None = None, run_id: str = "run-1") -
 
 
 @pytest.fixture
-def manager(tmp_path: Path) -> SessionManager:
+def manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SessionManager:
+    monkeypatch.setattr("telegram_cursor_agent.bridge.Path.home", lambda: tmp_path / "home")
     workspace = tmp_path / "ws"
     workspace.mkdir()
     data = tmp_path / "data"
